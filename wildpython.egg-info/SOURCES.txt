@@ -1,0 +1,10 @@
+README.md
+setup.py
+wildpython/__init__.py
+wildpython/wild_statsmodels.py
+wildpython.egg-info/PKG-INFO
+wildpython.egg-info/SOURCES.txt
+wildpython.egg-info/dependency_links.txt
+wildpython.egg-info/entry_points.txt
+wildpython.egg-info/requires.txt
+wildpython.egg-info/top_level.txt
