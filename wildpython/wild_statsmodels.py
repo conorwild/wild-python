@@ -1,3 +1,8 @@
+import pandas as pd
+import numpy as np
+
+from pandas import CategoricalDtype
+
 def build_exog_pred(estimated_results, at):
     """
         at: (dict) keys are factor / variable names, with either a range of
