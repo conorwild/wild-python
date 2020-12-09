@@ -22,7 +22,7 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        'numpy', 'pandas'
+        'numpy', 'pandas', 'matplotlib', 'statsmodels', 'plotly',
     ],
     entry_points='''
         [console_scripts]
