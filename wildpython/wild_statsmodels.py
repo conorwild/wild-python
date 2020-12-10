@@ -3,6 +3,8 @@ import numpy as np
 import itertools
 from statsmodels.sandbox.stats.multicomp import multipletests
 from statsmodels.formula.api import logit, mnlogit, ols
+from statsmodels.stats.anova import anova_lm
+
 from scipy import stats
 from pandas import CategoricalDtype
 import matplotlib.pyplot as plt
@@ -359,7 +361,10 @@ def r2_from(estimated_model):
     return r2
 
 
-def compare_models(model_comparisons, data, score_columns, model_type, alpha=0.05, n_comparisons=None, correction='bonferroni'):
+def compare_models(model_comparisons, 
+        data, score_columns, model_type, alpha=0.05, 
+        num_comparisons=None, adj_across=None, adj_type='bonferroni'):
+    #UPDATE THIS    
     """ Performs statistical analyses to compare fully specified regression models to (nested)
         restricted models. Uses a likelihood ratio test to compare the models, and also a 
         Bayesian model comparison method.
@@ -396,7 +401,9 @@ def compare_models(model_comparisons, data, score_columns, model_type, alpha=0.0
     contrasts = [comparison['name'] for comparison in model_comparisons]
     statistics = ['LR', 'p', 'p_adj', 'df',
                   'Delta R^2', 'Cohen f^2', 'BF_01', 'BF_10']
-    results_df = pd.DataFrame(index=pd.MultiIndex.from_product([contrasts, score_names]),
+    results_df = pd.DataFrame(
+                    index=pd.MultiIndex.from_product(
+                        [contrasts, score_names], names=['contrast', 'score']),
                               columns=statistics)
     for contrast in model_comparisons:
         for score_index, score in enumerate(score_columns):
@@ -420,21 +427,49 @@ def compare_models(model_comparisons, data, score_columns, model_type, alpha=0.0
                               1/bayesfactor_01]
             results_df.loc[(contrast['name'], score_name), :] = all_statistics
 
-        # Correct p-values for multiple comparisons across all tests of this contrast?
-        contrast_p_vals = results_df.loc[idx[contrast['name'], :], 'p']
-        if n_comparisons is not None:
-            adjusted_p_vals = np.clip(contrast_p_vals * n_comparisons, 0, 1)
-            results_df.loc[idx[contrast['name'], :], 'p_adj'] = adjusted_p_vals
-        elif correction is not None:
-            adjusted_p_vals = multipletests(
-                contrast_p_vals.values, alpha=alpha, method=correction)
-            results_df.loc[idx[contrast['name'], :],
-                           'p_adj'] = adjusted_p_vals[1]
+    # Correct p-values for multiple comparisons across all tests of this contrast?
+    results_df = adjust_pvals(results_df, adj_across=adj_across, adj_type=adj_type)
 
     return results_df
 
+def adjust_pvals(results, num_comparisons=None, adj_across=None, adj_type=None):
+    # if n_comparisons is not None:
+    #     adjusted_p_vals = np.clip(contrast_p_vals * n_comparisons, 0, 1)
+    #     results_df.loc[idx[contrast['name'], :], 'p_adj'] = adjusted_p_vals
+    if adj_across is not None and adj_type is not None:
+        if adj_across == 'all':
+            p_vals = results[['p']]
+        elif adj_across in ['scores', 'score', 's']:
+            p_vals = results['p'].unstack('contrast')
+        elif adj_across in ['contrasts', 'contrast', 'con', 'cons', 'c']:
+            p_vals = results['p'].unstack('score')
+        else:
+            raise ValueError(f"Invalid adjust across = {adj_across}")
+          
+        p_adj = [multipletests(p_vals[col], method=adj_type)[1] for col in p_vals]
+        p_adj = pd.DataFrame(np.column_stack(p_adj), index=p_vals.index, columns=p_vals.columns)
+        if p_adj.shape[1] > 1:
+            p_adj = p_adj.stack()
+        p_adj = p_adj.reorder_levels(results.index.names).reindex(results.index)
+    else:
+        p_adj = results['p']
 
-def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, correction=None, vertline=True):
+    results['p_adj'] = p_adj.values
+    return results
+
+def anova_analyses(formula, DVs, data, type_=2, adj_across=None, adj_type=None):
+    results = []
+    for dv in DVs:
+        r = ols(formula%(dv), data).fit()
+        results.append(anova_lm(r, typ=type_).drop('Residual'))
+    results = pd.concat(results, keys=DVs, names=['score', 'contrast'])
+    results = results.swaplevel('contrast', 'score')
+    results = results.rename(columns={'PR(>F)': 'p'})
+    results = adjust_pvals(results, adj_across=adj_across, adj_type=adj_type)
+    return results
+
+
+def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, correction=None, vertline=4):
     """ Creates a matrix figure to summarize multple tests/scores. Each cell represents a contrast
         (or model comparison) for a specific effect (rows) for a given score (columns). Also
         draws asterisks on cells for which there is a statistically significant effect.
@@ -475,8 +510,8 @@ def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, 
     imgplot = plt_axis.imshow(image_values.T, aspect='auto', clim=[
                               0, np.min([3, np.max(image_values)])])
 
-    if vertline:
-        plt_axis.plot([num_scores-4.5, num_scores-4.5],
+    if vertline is not None:
+        plt_axis.plot([num_scores-(vertline+.5), num_scores-(vertline+.5)],
                     [-0.5, num_contrasts-0.5], c='w')
     plt_axis.set_yticks(np.arange(0, num_contrasts))
     plt_axis.set_yticklabels(list(contrast_index))
