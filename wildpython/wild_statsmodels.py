@@ -410,8 +410,10 @@ def compare_models(model_comparisons,
             score_name = score_names[score_index]
 
             # Fit the fully specified model (h1) and the nested restricted model (h0) using OLS
-            h0 = model_type(contrast['h0'] % score, data=data).fit(disp=False)
             h1 = model_type(contrast['h1'] % score, data=data).fit(disp=False)
+
+            h0data = data.loc[h1.model.data.orig_exog.index, :]
+            h0 = model_type(contrast['h0'] % score, data=h0data).fit(disp=False)
 
             # Perform Likelihood Ratio test to compare h1 (full) model to h0 (restricted) one
             lr_test_result = likelihood_ratio_test_calc(h0, h1)
