@@ -33,6 +33,8 @@ def build_model_expression(regressors):
         >>> build_model_expression(['age', 'gender', 'other'])
             '%s ~ age+gender+other'
     """
+    if len(regressors) == 0:
+        regressors = ['1']
     return '%s ~ '+'+'.join(regressors)
 
 
@@ -470,8 +472,20 @@ def anova_analyses(formula, DVs, data, type_=2, adj_across=None, adj_type=None):
     results = adjust_pvals(results, adj_across=adj_across, adj_type=adj_type)
     return results
 
+def regression_analyses(formula, DVs, data, adj_across=None, adj_type=None):
+    results = []
+    for dv in DVs:
+        model = ols(formula % dv, data).fit()
+        r = pd.concat([model.params, model.tvalues, model.pvalues], axis=1)
+        r.columns = ['value', 'tstat', 'p']
+        r.index.name = 'contrast'
+        results.append(r)
+    results = pd.concat(results, names=['score'], keys=DVs)
+    results = results.swaplevel('contrast', 'score')
+    results = adjust_pvals(results, adj_across=adj_across, adj_type=adj_type)
+    return results
 
-def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, correction=None, vertline=4):
+def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, diverging=False, correction=None, vertline=4):
     """ Creates a matrix figure to summarize multple tests/scores. Each cell represents a contrast
         (or model comparison) for a specific effect (rows) for a given score (columns). Also
         draws asterisks on cells for which there is a statistically significant effect.
@@ -505,12 +519,23 @@ def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, 
     num_scores = stat_values.shape[0]
     num_contrasts = stat_values.shape[1]
     image_values = stat_values.values.astype('float32')
+
+    if diverging:
+        log_stats = False
+
     image_values = np.log10(image_values) if log_stats else image_values
+
+    imax = np.max(image_values)
+    if diverging:
+        irange = [-1*imax, imax]
+        cmap = 'coolwarm'
+    else:
+        irange = [0, np.min([3, imax])]
+        cmap = 'viridis'
 
     figure = plt.figure(figsize=[num_scores*0.6, num_contrasts*0.6])
     plt_axis = figure.add_subplot(1, 1, 1)
-    imgplot = plt_axis.imshow(image_values.T, aspect='auto', clim=[
-                              0, np.min([3, np.max(image_values)])])
+    imgplot = plt_axis.imshow(image_values.T, aspect='auto', clim=irange, cmap=cmap)
 
     if vertline is not None:
         plt_axis.plot([num_scores-(vertline+.5), num_scores-(vertline+.5)],
@@ -521,9 +546,9 @@ def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, 
     plt_axis.set_xticklabels(list(score_index), rotation=45, ha='right')
     cbar = figure.colorbar(imgplot, ax=plt_axis, pad=0.2/num_scores)
     if log_stats:
-        cbar.ax.set_ylabel('$Log_{10}(LR)$')
+        cbar.ax.set_ylabel('$Log_{10}$'+stat_name)
     else:
-        cbar.ax.set_ylabel('LR')
+        cbar.ax.set_ylabel(f"{stat_name}")
 
     reject_h0 = (p_values.values.T < alpha).nonzero()
     legend_label = "p < %.04f" % alpha
@@ -668,18 +693,43 @@ def rm_sems(X):
     cond_stders = cond_stdevs / np.sqrt(X.shape[0])
     return cond_stders
 
-def filter_df(df, sds = [6,4], in_place=False):
-    if not in_place:
-        df = df.copy()
+def filter_df(df, sds = [6,4], subset=None):
+    if subset is None:
+        subset = df.columns
+    
+    df_ = df[subset].copy()
 
     for sd in sds:
-        stats = df.describe()
+        stats = df_.describe()
         outliers = (
-            abs(df-stats.loc['mean', :]) > sd*stats.loc['std', :])
-        df[outliers] = np.nan
+            abs(df_ - stats.loc['mean', :]) > sd*stats.loc['std', :])
+        df_[outliers] = np.nan
         
+    df[subset] = df_    
     return df
 
+from scipy import stats
+## Helper functions for running ch2, 1-way ANOVA, or t-tests on a Pandas datafame.
+def chi2_pval(df, grouper, var):
+    """ Computes Chi2 stat and pvalue for a variable, given a grouping variable.
+    """
+    tabs = df[[grouper, var]].groupby([grouper])[var].value_counts()
+    chi2 = stats.chi2_contingency(tabs.unstack(grouper))
+    return chi2[1]
+
+def f_1way_pval(df, grouper, var):
+    """
+    """
+    g = [d[var].dropna() for i, d in df[[grouper, var]].groupby(grouper)]
+    f = stats.f_oneway(*g)
+    return f[1]
+
+def t_pval(df, grouper, var):
+    """ Assumes only two groups present! Otherwise use f_1way_pval
+    """
+    g = [d[var].dropna() for i, d in df[[grouper, var]].groupby(grouper)]
+    t = stats.ttest_ind(g[0], g[1], equal_var=False)
+    return t[1]
 
 
 
