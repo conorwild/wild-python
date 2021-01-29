@@ -552,8 +552,7 @@ def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, 
 
     reject_h0 = (p_values.values.T < alpha).nonzero()
     legend_label = "p < %.04f" % alpha
-    if correction is not None:
-        legend_label += " (%s)" % correction
+    legend_label += f" ({'unc' if correction is None else correction})"
     plt_axis.plot(reject_h0[1], reject_h0[0], 'r*',
                   markersize=10, label=legend_label)
 
