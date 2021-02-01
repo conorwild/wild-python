@@ -499,7 +499,6 @@ def rm_sems(X):
 
     assert isinstance(X, np.ndarray)
 
-    print('asdfasdfasdf')
     X = X[~np.isnan(X).any(axis=1)]
     grand_mean = X.mean()
     subj_means = X.mean(axis=1)[:, np.newaxis]

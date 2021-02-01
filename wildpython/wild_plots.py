@@ -5,29 +5,36 @@ import pandas as pd
 import numpy as np
 from plotly.offline import init_notebook_mode, plot, iplot
 from plotly.subplots import make_subplots
+from .wild_statsmodels import f_1way_pval
+idx = pd.IndexSlice
 
 margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
 dark2 = px.colors.qualitative.Dark2
 
-def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, diverging=False, correction=None, vertline=4):
-    """ Creates a matrix figure to summarize multple tests/scores. Each cell represents a contrast
-        (or model comparison) for a specific effect (rows) for a given score (columns). Also
-        draws asterisks on cells for which there is a statistically significant effect.
+def create_stats_figure(
+        results, stat_name, p_name, alpha=0.05, log_stats=True, 
+        diverging=False, stat_range=None, correction=None, vertline=4
+    ):
+    """ Creates a matrix figure to summarize multple tests/scores. Each cell 
+        represents a contrast (or model comparison) for a specific effect (rows)
+        for a given score (columns). Also draws asterisks on cells for which 
+        there is a statistically significant effect.
         
     Args:
-        results (Pandas dataframe): a dataframe that contains the statistics to display. Should
-            be a rectangular dataframe with tests as rows and effects as columns (i.e., the 
-            transpose of the resulting image). The dataframe index and column labels are used
-            as labels for the resulting figure.
-        stat_name (string): Which statistic to plot. There might be multiple columns for each
-            effect (e.g., Likelihood Ratio, BFs, F-stats, etc.)
+        results (Pandas dataframe): a dataframe that contains the statistics to 
+            display. Should be a rectangular dataframe with tests as rows and 
+            effects as columns (i.e., the  transpose of the resulting image). 
+            The dataframe index and column labels are used as labels for the 
+            resulting figure.
+        stat_name (string): Which statistic to plot. There might be multiple 
+            columns for each effect (e.g., Likelihood Ratio, BFs, F-stats, etc.)
         p_name (string): The name of the column to use for p-values.
         alpha (float): what is the alpha for significant effects?
-        log_stats (boolean): Should we take the logarithm of statistic values before creating 
-            the image? Probably yes, if there is a large variance in value across tests and
-            effects.
-        correction (string): indicates how the alpha was corrected (e.g., FDR or bonferroni) so
-            the legend can be labelled appropriately.
+        log_stats (boolean): Should we take the logarithm of statistic values 
+            before creating the image? Probably yes, if there is a large 
+            variance in value across tests and effects.
+        correction (string): indicates how the alpha was corrected (e.g., FDR 
+            or bonferroni) so the legend can be labelled appropriately.
             
     Returns:
         A matplotlib figure.
@@ -49,17 +56,18 @@ def create_stats_figure(results, stat_name, p_name, alpha=0.05, log_stats=True, 
 
     image_values = np.log10(image_values) if log_stats else image_values
 
-    imax = np.max(image_values)
+    imax = np.max(np.abs(image_values))
     if diverging:
-        irange = [-1*imax, imax]
+        irange = [-1*imax, imax] if stat_range is None else stat_range
         cmap = 'coolwarm'
     else:
-        irange = [0, np.min([3, imax])]
+        irange = [0, np.min([3, imax])] if stat_range is None else stat_range
         cmap = 'viridis'
 
     figure = plt.figure(figsize=[num_scores*0.6, num_contrasts*0.6])
     plt_axis = figure.add_subplot(1, 1, 1)
-    imgplot = plt_axis.imshow(image_values.T, aspect='auto', clim=irange, cmap=cmap)
+    imgplot = plt_axis.imshow(
+                image_values.T, aspect='auto', clim=irange, cmap=cmap)
 
     if vertline is not None:
         plt_axis.plot([num_scores-(vertline+.5), num_scores-(vertline+.5)],
@@ -163,17 +171,108 @@ def create_bayes_factors_figure(results, log_stats=True):
     plt.show()
     return figure
 
-def pie_plot(df, group_var, hole=0.3, marker=None, width=400, height=250):
+def pie_plot(
+        df, group_var, hole=0.3, marker=None, width=400, height=250,
+        layout_args={}, pie_args={}
+    ):
     c = df.groupby(group_var).agg(['count']).iloc[:, 0]
     f = go.Figure(
-        go.Pie(
+            go.Pie(
                 labels=c.index, 
                 values=c.values, 
                 hole=hole, 
                 textinfo='value+percent',
-                marker={} if marker is None else marker
-        ))
-    f.update_layout(width=400, height=250, margin=margins)
+                marker={} if marker is None else marker,
+                **pie_args
+            ))
+    f.update_layout(
+        width=width, height=250, 
+        margin=margins,
+        legend=dict(title=group_var),
+        **layout_args)
+
+    return f
+
+def histogram(
+        df, var, bins, centres=None, x_title=None, y_title=None, height=300,
+        width=400, layout_args={}, bar_args={}
+    ):
+
+    counts, bins = np.histogram(df[var], bins=bins)
+    if centres is None: 
+        centres = bins = 0.5 * (bins[:-1] + bins[1:])
+    f = px.bar(
+            x=centres, y=counts, 
+            labels={ 
+                'x': x_title if x_title is not None else var,
+                'y': y_title if y_title is not None else '# of Participants'
+            },
+            **bar_args)
+
+    f.update_layout(
+        margin=margins,
+        barmode='group', bargap=0.0, 
+        width=width, height=height,
+        **layout_args)
+
+    return f
+
+
+def means_plot(
+        df, vars, vars_name,
+        bar_args={}, layout_args={},
+        group=None, group_order=None, 
+        group_color_sequence=px.colors.sequential.Plasma,
+        height=400, width=350, group_tests=False
+    ):
+
+    stats = ['mean', 'std', 'count']
+    order = {vars_name: vars}
+    if group is None:
+        means = df[vars].agg(stats).T
+        means.index.name = vars_name
+        means.columns.name = 'stat'
+    else:
+        if group_order is not None:
+            order = {**order, group: group_order}
+
+        means = df[vars+[group]].groupby(group).agg(stats)
+        means.columns.names = [vars_name, 'stat']
+        means = means.stack(vars_name)
+    
+    means['mean_se'] = means['std']/np.sqrt(means['count'])
+
+    f = px.bar(
+            means.reset_index(),
+            x=vars_name, y='mean', error_y='mean_se', 
+            opacity=0.75,
+            color=group,
+            category_orders=order,
+            color_discrete_sequence=group_color_sequence,
+            barmode='group',
+            **bar_args)
+
+    if group_tests:
+        for v in vars:
+            p = f_1way_pval(df, group, v)
+            if  p < 0.001:
+                txt = "***"
+            elif p < 0.01:
+                txt = "**"
+            elif p < 0.05:
+                txt = "*"
+            else:
+                txt = ""
+            f.add_annotation(
+                x=v, text=txt, showarrow=False,
+                y=means.loc[idx[:, v], :][['mean', 'mean_se']].sum(axis=1).max(),
+                xanchor='center', yanchor='bottom')
+
+    f.update_layout(
+        margin=margins,
+        height=height, width=width, 
+        **layout_args)
+
     return f
 
 def pca_loading_plot(loadings_matrix, n_comps, feature_names, write_img=False,
