@@ -293,7 +293,112 @@ def pca_loading_plot(loadings_matrix, n_comps, feature_names, write_img=False,
         yaxis=dict(tickfont=dict(size=8)),
         height=height, width=width)
 
-    if write_img:
-        write_image(fig, f"{age_str}_{test}")
-
     return fig
+
+def jittered_helper(df, xvar, xgrp, gap=8):
+    df[xvar] = df[xvar].astype('category')
+    df[xgrp] = df[xgrp].astype('category')
+    n_grps = len(df[xgrp].cat.categories)
+    dx = (n_grps-1)/2
+    x_jitt = (df[xgrp].cat.codes - dx) / gap / dx
+    df['new_x'] = df[xvar].cat.codes+1+x_jitt
+    return df
+
+def jittered_scatter(df, xvar, xgrp, yvar, yerr, colormap, horizontal=False,
+                     yrange=[0, 1], chance_line=True, 
+                     ytitle='Probability (negative outcome)', 
+                     xtitle='Measure'):
+    df = jittered_helper(df, xvar, xgrp) 
+    n_cats = len(df[xvar].cat.categories)
+    f = px.scatter(
+        df, x='new_x', y=yvar, color=xgrp, error_y=yerr, 
+        color_discrete_sequence=colormap)
+
+    f.update_layout(
+        xaxis={
+            'tickmode': 'array',
+            'tickvals': np.arange(1, n_cats+1),
+            'ticktext': list(df[xvar].cat.categories),
+        }
+    )
+
+    if chance_line:
+        f.add_trace(
+            go.Scatter(x=[0.5, n_cats+0.5], y=[0.5, 0.5], line={'dash': 'dot', 'width': 2},
+                    mode='lines', marker_color='gray', showlegend=False)
+        )
+
+    f.update_yaxes(zeroline=False, range=yrange,
+                   title=ytitle)
+    f.update_xaxes(title=xtitle)
+
+    return f
+
+
+def linear_mean_prediction_plot(
+        df, xvar, xgrp, yvar, yerr, colormap, ymap=None, ytitle="",
+        xtitle="", width=400, height=250, margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}):
+    """
+        ymap is a list of lables to apply to the y-axis, instead of numbers.
+        Assumes 0 -> n_values-1 (integers)
+    """
+    n_cats = df['DV'].value_counts().shape[0]
+    df[xgrp] = df[xgrp].astype('category')
+    f = px.bar(
+        df, x=xvar, y=yvar, color=xgrp, error_y=yerr,
+        color_discrete_sequence=colormap, barmode='group')
+
+    if ymap is not None:
+        f.update_layout(
+            yaxis={
+                'tickmode': 'array',
+                'tickvals': np.arange(0, len(ymap)),
+                'ticktext': ymap,
+                'range': [0, len(ymap)-0.75]
+            }
+        )
+
+    f.update_layout(
+        yaxis={'title': ytitle},
+        xaxis={'showgrid': False, 'title': xtitle, 'tickangle': 30},
+        bargap=.25, bargroupgap=0.1,
+        margin=margins, width=width, height=height)
+
+    return f
+
+def odds_plot(df, xvar, xgrp, yvar, yerr, colormap):
+    df[xvar] = df[xvar].astype('category')
+    df[xgrp] = df[xgrp].astype('category')
+    n_cats = len(df[xvar].cat.categories)
+    n_parm = len(df[xgrp].cat.categories)
+    fig = make_subplots(rows=1, cols=n_cats, subplot_titles=df[xvar].cat.categories,
+                        shared_yaxes=True, horizontal_spacing=0.01)
+
+    df['y_pls'] = df['CI_hi'] - df[yvar]
+    df['y_min'] = df[yvar] - df['CI_lo']
+
+    for i, (_, d) in enumerate(df.groupby(xvar)):
+        fig.add_trace(
+            go.Scatter(
+                x=d[yvar].values, y=d[xgrp].values,
+                error_x={
+                    'type': 'data', 'symmetric': False, 
+                    'array': d['y_pls'], 'arrayminus': d['y_min']},
+                mode='markers', showlegend=False),
+            row=1, col=i+1)
+        fig.add_trace(
+            go.Scatter(
+                y=d[xgrp].values, x=[1]*n_parm,
+                line={'dash': 'dot', 'width': 2},
+                mode='lines', marker_color='gray', showlegend=False
+            ),
+            row=1, col=i+1)
+
+    fig.update_xaxes(
+        zeroline=False,
+        tickvals=[0.2, 0.5, 1.0, 2.0, 5.0], range=[-1, 1], type="log",
+        title='Odds Ratio')
+    fig.update_yaxes(
+        zeroline=False, showgrid=False)
+    return fig
+    
