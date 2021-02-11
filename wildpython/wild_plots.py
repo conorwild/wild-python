@@ -6,6 +6,8 @@ import numpy as np
 from plotly.offline import init_notebook_mode, plot, iplot
 from plotly.subplots import make_subplots
 from .wild_statsmodels import f_1way_pval
+from os import path
+
 idx = pd.IndexSlice
 
 margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
@@ -402,3 +404,9 @@ def odds_plot(df, xvar, xgrp, yvar, yerr, colormap):
         zeroline=False, showgrid=False)
     return fig
     
+def write_image(figure, name, directory, format='png', scale=2):
+    img_bytes = figure.to_image(format=format, scale=scale)
+    out_file = path.join(directory, name)
+    with open(out_file, 'wb') as file:
+
+        file.write(img_bytes)
