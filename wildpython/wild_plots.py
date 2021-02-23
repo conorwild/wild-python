@@ -5,13 +5,38 @@ import pandas as pd
 import numpy as np
 from plotly.offline import init_notebook_mode, plot, iplot
 from plotly.subplots import make_subplots
-from .wild_statsmodels import f_1way_pval
+from .wild_statsmodels import f_1way_pval, tstat
+from .wild_colors import D1_CMAP, D2_CMAP, D3_CMAP, D4_CMAP
 from os import path
+
+from mergedeep import merge
 
 idx = pd.IndexSlice
 
 margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
 dark2 = px.colors.qualitative.Dark2
+
+import matplotlib as mpl
+mpl.rcParams['figure.dpi'] = 100
+
+
+def plotly_layout_defauls():
+    return {
+        # 'paper_bgcolor': 'rgba(0,0,0,0)',
+        # 'plot_bgcolor': 'rgba(0,0,0,0)',
+        'font': {
+            'size': 10
+        },
+        'xaxis': {
+            # 'zerolinecolor': 'gray',
+            'zerolinewidth': 10,
+        },
+        'yaxis': {
+            # 'linecolor': 'lightgray',
+            'gridwidth': 0.2, 
+            # 'gridcolor': 'lightgray',
+        }
+    }
 
 def create_stats_figure(
         results, stat_name, p_name, alpha=0.05, log_stats=True, 
@@ -43,12 +68,10 @@ def create_stats_figure(
         
     """
 
-    score_index = results.index.get_level_values(1).unique()
-    contrast_index = results.index.get_level_values(0).unique()
-    stat_values = results.loc[:, stat_name].unstack().T.reindex(
-        index=score_index, columns=contrast_index)
-    p_values = results.loc[:, p_name].unstack().T.reindex(
-        index=score_index, columns=contrast_index)
+    score_index = results.index.unique('score')
+    contrast_index = results.index.unique('contrast')
+    stat_values = results.loc[:, stat_name].unstack('contrast')
+    p_values = results.loc[:, p_name].unstack('contrast')
     num_scores = stat_values.shape[0]
     num_contrasts = stat_values.shape[1]
     image_values = stat_values.values.astype('float32')
@@ -61,7 +84,7 @@ def create_stats_figure(
     imax = np.max(np.abs(image_values))
     if diverging:
         irange = [-1*imax, imax] if stat_range is None else stat_range
-        cmap = 'coolwarm'
+        cmap = D1_CMAP
     else:
         irange = [0, np.min([3, imax])] if stat_range is None else stat_range
         cmap = 'viridis'
@@ -95,7 +118,8 @@ def create_stats_figure(
     return figure
 
 
-def create_bayes_factors_figure(results, log_stats=True):
+def create_bayes_factors_figure(results, log_stats=True, 
+        vertline=None, cmap=None, cell_scale=0.6):
     """ Creates a matrix figure to summarize Bayesian stats for multiple scores & tests.
         Each cell indicates the Bayes Factor (BF associated with a model comparison) for 
         a specific effect (rows) for a given score (columns). Also draws symbols on cells
@@ -115,21 +139,27 @@ def create_bayes_factors_figure(results, log_stats=True):
     
     """
 
-    score_index = results.index.get_level_values(1).unique()
-    contrast_index = results.index.get_level_values(0).unique()
+    
+    score_index = results.index.unique('score')
+    contrast_index = results.index.unique('contrast')
     num_scores = len(score_index)
     num_contrasts = len(contrast_index)
-    bf_values = results.loc[:, 'BF_01'].unstack().T.reindex(
+    bf_values = results.loc[:, 'BF10'].unstack('contrast').reindex(
         index=score_index, columns=contrast_index).values.astype('float32')
     # Too small values cause problems for the image scaling
+
     np.place(bf_values, bf_values < 0.00001, 0.00001)
 
-    figure = plt.figure(figsize=[num_scores*0.6, num_contrasts*0.6])
+    if cmap is None:
+        cmap = D2_CMAP
+
+    figure = plt.figure(figsize=[num_scores*cell_scale, num_contrasts*cell_scale])
     plt_axis = figure.add_subplot(1, 1, 1)
     imgplot = plt_axis.imshow(np.log10(bf_values.T),
-                              aspect='auto', cmap='coolwarm', clim=[-6.0, 6.0])
-    plt_axis.plot([num_scores-4.5, num_scores-4.5],
-                  [-0.5, num_contrasts-0.5], c='w')
+                              aspect='auto', cmap=cmap, clim=[-6.0, 6.0])
+    if vertline is not None:
+        plt_axis.plot([num_scores-vertline-4.5, num_scores-vertline-4.5],
+                      [-0.5, num_contrasts-0.5], c='w')
     plt_axis.set_yticks(np.arange(0, num_contrasts))
     plt_axis.set_yticklabels(list(contrast_index))
     plt_axis.set_xticks(np.arange(0, num_scores))
@@ -137,9 +167,9 @@ def create_bayes_factors_figure(results, log_stats=True):
 
     # Add a colour bar
     cbar = figure.colorbar(imgplot, ax=plt_axis, pad=0.2/num_scores)
-    cbar.ax.set_ylabel('$Log_{10}(BF_{01})$')
-    cbar.ax.text(0, 1.05, "$H_0$")
-    cbar.ax.text(0, -0.12, "$H_1$")
+    cbar.ax.set_ylabel('$H_0$   '+'$Log(BF_{10})$'+'   $H_1$')
+    # cbar.ax.text(75,  4, "$H_1$")
+    # cbar.ax.text(75, -5, "$H_0$")
 
     # Use absolute BFs for determining weight of evidence
     abs_bfs = bf_values
@@ -148,7 +178,7 @@ def create_bayes_factors_figure(results, log_stats=True):
 
     # Custom markers for the grid
     markers = [(2+i, 1+i % 2, i/4*90.0) for i in range(1, 5)]
-    markersize = 10
+    markersize = 10 * cell_scale *2
 
     # Positive evidence BF 3 - 20
     positive = (abs_bfs >= 3) & (abs_bfs < 20)
@@ -166,10 +196,10 @@ def create_bayes_factors_figure(results, log_stats=True):
     very_strong = (abs_bfs >= 150)
     xy = very_strong.nonzero()
     plt_axis.plot(xy[0], xy[1], 'r', linestyle='none',
-                  marker=markers[2], label='very strong', markersize=markersize)
+                  marker=markers[2], label='v. strong', markersize=markersize)
 
     plt.legend(bbox_to_anchor=(0.5, 1.05), loc='lower center',
-               borderaxespad=0., ncol=4, title='Bayes\' evidence')
+               borderaxespad=0., ncol=4, title='Bayes Evidence')
     plt.show()
     return figure
 
@@ -191,7 +221,7 @@ def pie_plot(
         width=width, height=250, 
         margin=margins,
         legend=dict(title=group_var),
-        **layout_args)
+        **merge(plotly_layout_defauls(), layout_args))
 
     return f
 
@@ -215,7 +245,7 @@ def histogram(
         margin=margins,
         barmode='group', bargap=0.0, 
         width=width, height=height,
-        **layout_args)
+        **merge(plotly_layout_defauls(), layout_args))
 
     return f
 
@@ -225,7 +255,8 @@ def means_plot(
         bar_args={}, layout_args={},
         group=None, group_order=None, 
         group_color_sequence=px.colors.sequential.Plasma,
-        height=400, width=350, group_tests=False
+        group_tests=False, bar_tests=False,
+        height=400, width=350, 
     ):
 
     stats = ['mean', 'std', 'count']
@@ -270,11 +301,65 @@ def means_plot(
                 y=means.loc[idx[:, v], :][['mean', 'mean_se']].sum(axis=1).max(),
                 xanchor='center', yanchor='bottom')
 
+    if bar_tests:
+        ncs = means.shape[0]
+        dfs = means.xs('count', axis=1)-1
+        ci  = means['mean_se'] * tstat((1-0.05/ncs), dfs)
+        means['sig'] = (np.abs(means['mean'])-ci) > 0
+
+
     f.update_layout(
         margin=margins,
         height=height, width=width, 
-        **layout_args)
+        **merge(plotly_layout_defauls(), layout_args))
 
+    return f
+
+def correlogram(
+        df, subset=None, mask_diag=True, thresh=None, 
+        width=475, height=350, colormap='Picnic', layout_args={}):
+    """ Description here
+    Args: 
+        df (dataframe): The dataframe with rows as observations and columns
+            as variables.
+        subset (list-like): Which variables (columns) to subselect. If None, all
+            columns are used. (default: None)
+        
+    """
+    if subset is None:
+        subset = df.columns
+
+    r = df[subset].corr()
+
+    if thresh is not None:
+        df[np.abs(df)<thresh] = 0
+
+    if mask_diag:
+        np.fill_diagonal(r.values, 0)
+
+    r = (r
+        .stack()
+        .reset_index()
+        .rename(columns={'level_0': 'x', 'level_1': 'y', 0: 'r'})
+    )
+
+    f = px.scatter(r, x='x', y='y', size=np.abs(r['r']), 
+        color='r', range_color=[-1,1], opacity = 1,
+        color_continuous_scale=getattr(px.colors.diverging, colormap))
+
+    f.update_layout(
+        xaxis={'title': None},
+        yaxis={'title': None},
+        width=width, height=height,
+        coloraxis={'colorbar': 
+            {'thickness': 10, 'tickmode': 'array', 'tickvals': [-1, 0, 1],
+            'title': 
+                {'text': 'correlation (r)', 'side': 'right'}
+            },
+        },
+        font={'size': 8},
+        margin={'t': 20, 'r': 10, 'l': 80, 'b': 20},
+        **layout_args)
     return f
 
 def pca_loading_plot(loadings_matrix, n_comps, feature_names, write_img=False,
@@ -367,6 +452,7 @@ def linear_mean_prediction_plot(
         margin=margins, width=width, height=height)
 
     return f
+
 
 def odds_plot(df, xvar, xgrp, yvar, yerr, colormap):
     df[xvar] = df[xvar].astype('category')

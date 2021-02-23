@@ -249,10 +249,63 @@ def r2_from(estimated_model):
         raise AttributeError("Can't find R2 function for model")
     return r2
 
+def compare_all_models(
+        data, IVs, DVs, null=[], max_n_IVs=None, 
+        do_cell_figure=False, do_line_figure=False):
+    """
+
+    Args:
+        data (dataframe):
+        IVs (list-like): names of columns to use as predictors in linear models
+        DVs (list-like): names of columns to as outcome measures (to be 
+            predicted).
+        null (list-like): names of columns to be included in the null model.
+        max_n_IVs (integer): maximum number of variables to be included in a 
+            the models. e.g., if equal to 1, then only models that contain 
+            one of the IVs will be tested. If None, then no limit (can use all
+            IVs in the same model)
+        do_cell_figure (boolean): generate a nifty figure.
+
+    """
+    from itertools import combinations
+    from .wild_plots import create_bayes_factors_figure
+
+    data = data.dropna(subset=[iv for iv in IVs if not ':' in iv]+DVs+null)
+
+    if max_n_IVs is None:
+        max_n_IVs = len(IVs)
+
+    all_combs = [comb for n_var in range(max_n_IVs) for comb in combinations(IVs, r=n_var+1)]
+    n_combs = len(all_combs)
+
+    BFs = (pd
+        .DataFrame(index=DVs, columns=all_combs)
+        .rename_axis('score', axis=0)
+        .rename_axis('model', axis=1)
+    )
+
+    for i_dv, dv in enumerate(DVs):
+        expr0 = build_model_expression(null)%dv
+        m0 = ols(expr0, data=data).fit()
+        for i_m, comb in enumerate(all_combs):
+            expr1 = build_model_expression(list(comb)+null)%dv
+            m1 = ols(expr1, data=data).fit()
+            BFs.iloc[i_dv, i_m] = 1./ bayes_factor_01_approximation(
+                m1, m0, min_value=0, max_value=None)
+
+    if do_cell_figure:
+        plot_data = (pd
+            .concat([BFs.rename_axis('contrast', axis=1)], keys=['BF10'], axis=1)
+            .stack('contrast')
+        )
+        fig = create_bayes_factors_figure(plot_data, cell_scale=0.4)
+    else:
+        fig = None
+
+    return BFs, fig
 
 def compare_models(model_comparisons, 
-        data, score_columns, model_type, alpha=0.05, 
-        num_comparisons=None, adj_across=None, adj_type='bonferroni'):
+        data, score_columns, model_type, **correction_args):
     #UPDATE THIS    
     """ Performs statistical analyses to compare fully specified regression models to (nested)
         restricted models. Uses a likelihood ratio test to compare the models, and also a 
@@ -294,6 +347,7 @@ def compare_models(model_comparisons,
                     index=pd.MultiIndex.from_product(
                         [contrasts, score_names], names=['contrast', 'score']),
                               columns=statistics)
+                              
     for contrast in model_comparisons:
         for score_index, score in enumerate(score_columns):
             score_name = score_names[score_index]
@@ -319,15 +373,32 @@ def compare_models(model_comparisons,
             results_df.loc[(contrast['name'], score_name), :] = all_statistics
 
     # Correct p-values for multiple comparisons across all tests of this contrast?
-    results_df = adjust_pvals(results_df, adj_across=adj_across, adj_type=adj_type)
+    results_df = (results_df
+        .pipe(adjust_pvals, **correction_args)
+        .swaplevel('contrast', 'score')
+        .loc[idx[score_names,:], :]
+    )
 
     return results_df
 
-def adjust_pvals(results, num_comparisons=None, adj_across=None, adj_type=None):
-    # if n_comparisons is not None:
-    #     adjusted_p_vals = np.clip(contrast_p_vals * n_comparisons, 0, 1)
-    #     results_df.loc[idx[contrast['name'], :], 'p_adj'] = adjusted_p_vals
-    if adj_across is not None and adj_type is not None:
+def corrected_alpha_from(**correction_args):
+    if 'alpha' in correction_args:
+        return correction_args['alpha']
+    elif 'n_comparisons' in correction_args:
+        return 0.05 / correction_args['n_comparisons']
+    else:
+        return 0.05
+
+def adjust_pvals(results, 
+        n_comparisons=None, adj_across=None, adj_type=None, alpha=None):
+
+    if n_comparisons is not None:
+        p_adj = results['p'] * n_comparisons
+
+    elif alpha is not None:
+        p_adj = results['p'] * 0.05/alpha
+
+    elif adj_across is not None and adj_type is not None:
         if adj_across == 'all':
             p_vals = results[['p']]
         elif adj_across in ['scores', 'score', 's']:
@@ -342,13 +413,14 @@ def adjust_pvals(results, num_comparisons=None, adj_across=None, adj_type=None):
         if p_adj.shape[1] > 1:
             p_adj = p_adj.stack()
         p_adj = p_adj.reorder_levels(results.index.names).reindex(results.index)
+
     else:
         p_adj = results['p']
 
-    results['p_adj'] = p_adj.values
+    results['p_adj'] = np.clip(p_adj.values, 0, 1)
     return results
 
-def anova_analyses(formula, DVs, data, type_=2, adj_across=None, adj_type=None):
+def anova_analyses(formula, DVs, data, type_=2, **correction_args):
     results = []
     for dv in DVs:
         r = ols(formula%(dv), data).fit()
@@ -356,20 +428,120 @@ def anova_analyses(formula, DVs, data, type_=2, adj_across=None, adj_type=None):
     results = pd.concat(results, keys=DVs, names=['score', 'contrast'])
     results = results.swaplevel('contrast', 'score')
     results = results.rename(columns={'PR(>F)': 'p'})
-    results = adjust_pvals(results, adj_across=adj_across, adj_type=adj_type)
+    results = adjust_pvals(results, **correction_args)
     return results
 
-def regression_analyses(formula, DVs, data, adj_across=None, adj_type=None):
+def JSZ_BFs_from_ts(tvalues, N):
+    """
+    """
+    from pingouin import bayesfactor_ttest
+    BFs = { name: bayesfactor_ttest(t, N, paired=True, tail='two-sided') for 
+                name, t in tvalues.items() }
+    return pd.Series(BFs)
+
+
+def regression_analyses(formula, DVs, data, IVs=None, **correction_args):
+    """ Insert description here.
+
+    Args:
+        Formula (string): the regression formula used for building models.
+            Must begind with '%s' because the DV gets interpolated when looping
+            over all the variables to be evaluated.
+        DVs (list-like): the names of dependent variables. One regression model
+            will be estimated for each DV.
+        IVs (list-like): the independent variables to do statistics on. If 
+            None then all variables in the formula are tested. (default: None)
+        alpha (float): the alpha (e.g., 0.05) for determining statistical
+            significance. You can etiher specify this here, or leave it and
+            specify a method for correcting formultiple comparisons (see
+            next two parameters). If set, this option takes priority.
+        n_comparisons: like alpha, but instead it's the number of comparisons.
+        adj_across (string): when doing an automatic correction for multiple
+            comparisons, do you correct across DVs ("scores"), IVs ("contrasts")
+            or all of them ("all")? 
+        adj_type (string): the method for correcting for multiple comparisons,
+            should be one of the options available in <insert function here>.
+            For example 'fdr_bh', 'sidak', 'bonferroni', etc.
+
+    """
     results = []
+
     for dv in DVs:
         model = ols(formula % dv, data).fit()
-        r = pd.concat([model.params, model.tvalues, model.pvalues], axis=1)
-        r.columns = ['value', 'tstat', 'p']
+        n_obs  = model.df_resid+model.df_model+1
+        r = pd.concat(
+                [model.params, 
+                 model.tvalues,
+                 model.pvalues, 
+                 model.conf_int(corrected_alpha_from(**correction_args)),
+                 JSZ_BFs_from_ts(model.tvalues, n_obs)], 
+                axis=1)
+        r.columns = ['value', 'tstat', 'p', 'CI_lower', 'CI_upper', 'BF10']
+        r['df'] = model.df_resid
         r.index.name = 'contrast'
         results.append(r)
     results = pd.concat(results, names=['score'], keys=DVs)
-    results = results.swaplevel('contrast', 'score')
-    results = adjust_pvals(results, adj_across=adj_across, adj_type=adj_type)
+
+    if IVs is not None:
+        results = results.loc[idx[:, IVs], :]
+
+    results = adjust_pvals(results, **correction_args)
+
+    return results
+
+
+def ttests(
+        group_var, DVs, data, paired=False, tails='two-sided',
+        test_name='Mean Difference', **correction_args):
+    """ Insert description here.
+
+    Args:
+        group_var (string): The variables that will be used to group/split
+            the dataset. Bust have only two levels.
+        DVs (list-like): the names of dependent variables. One regression model
+            will be estimated for each DV.
+        alpha (float): the alpha (e.g., 0.05) for determining statistical
+            significance. You can etiher specify this here, or leave it and
+            specify a method for correcting formultiple comparisons (see
+            next two parameters). If set, this option takes priority.
+        adj_across (string): when doing an automatic correction for multiple
+            comparisons, do you correct across DVs ("scores"), IVs ("contrasts")
+            or all of them ("all")? 
+        adj_type (string): the method for correcting for multiple comparisons,
+            should be one of the options available in <insert function here>.
+            For example 'fdr_bh', 'sidak', 'bonferroni', etc.
+
+    """
+    from pingouin import ttest
+    grp_data = [d for _, d in data.groupby(group_var)]
+    assert(len(grp_data)==2)
+
+    results = []
+    for dv in DVs:
+        t = ttest(
+            grp_data[0][dv], grp_data[1][dv], 
+            confidence=(1-corrected_alpha_from(**correction_args)),
+            paired=paired, tail=tails)
+        t.index.names = ['contrast']
+        t['value'] = grp_data[0][dv].mean() - grp_data[1][dv].mean()
+        results.append(t)
+
+    results = (pd
+        .concat(results, names=['score'], keys=DVs)
+        .rename(columns={'p-val': 'p', 'T': 'tstat', 'dof': 'df'},
+                index={'T-test': test_name})
+    )
+
+    # unpack the CIs provided by pingouin
+    ci_col = [c for c in results.columns if c[0:2]=='CI'][0]
+    results = (results
+        .assign(CI_lower=results[ci_col].apply(lambda x: x[0]))
+        .assign(CI_upper=results[ci_col].apply(lambda x: x[1]))
+        .drop(columns=[ci_col])
+    )
+
+    results = adjust_pvals(results, **correction_args)
+
     return results
 
 
