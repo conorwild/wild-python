@@ -221,6 +221,7 @@ def bayes_factor_01_approximation(full_model, restricted_model, min_value=0.001,
     Returns:
         A float - the approximate Bayes Factor in support of the null hypothesis
     """
+    assert(full_model.nobs == restricted_model.nobs)
     bf = np.exp((full_model.bic - restricted_model.bic)/2)
     return np.clip(bf, min_value, max_value)
 
@@ -342,7 +343,7 @@ def compare_models(model_comparisons,
     score_names = [score for score in score_columns]  # no prproc for now
     contrasts = [comparison['name'] for comparison in model_comparisons]
     statistics = ['LR', 'p', 'p_adj', 'df',
-                  'Delta R^2', 'Cohen f^2', 'BF_01', 'BF_10']
+                  'dR2', 'f2', 'BF01', 'BF10']
     results_df = pd.DataFrame(
                     index=pd.MultiIndex.from_product(
                         [contrasts, score_names], names=['contrast', 'score']),
@@ -465,32 +466,39 @@ def regression_analyses(formula, DVs, data, IVs=None, **correction_args):
 
     """
     results = []
+    models = []
 
     for dv in DVs:
         model = ols(formula % dv, data).fit()
-        n_obs  = model.df_resid+model.df_model+1
         r = pd.concat(
                 [model.params, 
                  model.tvalues,
                  model.pvalues, 
-                 model.conf_int(corrected_alpha_from(**correction_args)),
-                 JSZ_BFs_from_ts(model.tvalues, n_obs)], 
+                 model.conf_int(corrected_alpha_from(**correction_args))],
                 axis=1)
-        r.columns = ['value', 'tstat', 'p', 'CI_lower', 'CI_upper', 'BF10']
+        r.columns = ['value', 'tstat', 'p', 'CI_lower', 'CI_upper']
         r['df'] = model.df_resid
         r.index.name = 'contrast'
         results.append(r)
+        models.append(model)
+
     results = pd.concat(results, names=['score'], keys=DVs)
+    results['CI'] = results.apply(lambda x: [x['CI_lower'], x['CI_upper']], axis=1)
 
     if IVs is not None:
         results = results.loc[idx[:, IVs], :]
 
     results = adjust_pvals(results, **correction_args)
 
-    return results
+    return results, models
 
+def _ci_str(ci, precision=2):
+    """ Formats a pair of floats that represent Confidence Intervals to a 
+        string that goes in a table, like: "(0.26, 1.79)"
+    """
+    return f"({ci[0]:.{precision}f}, {ci[1]:.{precision}f})"
 
-def ttests(
+def two_sample_ttests(
         group_var, DVs, data, paired=False, tails='two-sided',
         test_name='Mean Difference', **correction_args):
     """ Insert description here.
@@ -528,7 +536,7 @@ def ttests(
 
     results = (pd
         .concat(results, names=['score'], keys=DVs)
-        .rename(columns={'p-val': 'p', 'T': 'tstat', 'dof': 'df'},
+        .rename(columns={'p-val': 'p', 'T': 'tstat', 'dof': 'df', 'value': 'diff'},
                 index={'T-test': test_name})
     )
 
@@ -537,7 +545,7 @@ def ttests(
     results = (results
         .assign(CI_lower=results[ci_col].apply(lambda x: x[0]))
         .assign(CI_upper=results[ci_col].apply(lambda x: x[1]))
-        .drop(columns=[ci_col])
+        .rename(columns={ci_col: 'CI'})
     )
 
     results = adjust_pvals(results, **correction_args)
@@ -573,19 +581,23 @@ def rm_sems(X):
     cond_stders = cond_stdevs / np.sqrt(X.shape[0])
     return cond_stders
 
-def filter_df(df, sds = [6,4], subset=None):
+def filter_df(df, sds = [6,4], subset=None, drop=False):
     if subset is None:
         subset = df.columns
     
     df_ = df[subset].copy()
 
+    outliers = np.full(df_.shape, False)
     for sd in sds:
-        stats = df_.describe()
-        outliers = (
-            abs(df_ - stats.loc['mean', :]) > sd*stats.loc['std', :])
-        df_[outliers] = np.nan
-        
-    df[subset] = df_    
+        stats = df_.agg(['count', 'mean', 'std'])
+        oorange = (abs(df_ - stats.loc['mean', :]) > sd*stats.loc['std', :])
+        df_[oorange] = np.nan
+        outliers = (outliers | oorange.values)
+    df[subset] = df_
+
+    if drop:
+        df = df[~outliers.any(axis=1)]
+
     return df
 
 from scipy import stats

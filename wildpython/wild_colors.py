@@ -1,3 +1,4 @@
+from _plotly_utils.colors import unlabel_rgb
 import numpy as np
 import matplotlib
 
@@ -62,7 +63,7 @@ def is_rgba(c):
     """ Is the passed color string (in a tuple format) RGBA?
     """
     if isinstance(c, str):
-        return callable[0:4].lower() == 'rgba'
+        return c[0:4].lower() == 'rgba'
     else:
         return len(c) == 4
 
@@ -97,6 +98,18 @@ def rgb_to_rgba(cmap, alpha=1.0, norm=True):
 
     return [tuple(rgb[i,:]) for i in range(rgb.shape[0])]
 
+def unlabel_rgbs(cmap):
+    from plotly import colors
+    return [colors.unlabel_rgb(c) for c in cmap]
+
+def to_RGB_255(cmap, as_str=True):
+    from plotly import colors
+    cmap = [colors.convert_to_RGB_255(c) for c in cmap]
+    if as_str:
+        return [colors.label_rgb(c) for c in cmap]
+    else:
+        return cmap
+
 def plotly_cmap(type_, name_):
     from plotly import colors
     ctype = getattr(colors, type_)
@@ -111,9 +124,11 @@ def create_mpl_cmap(cmap, n_steps=10, alpha=1.0):
 
     ncols = len(cmap)
 
-    if is_rgb(cmap[0]):
+    if is_rgb(cmap[0]) and alpha is not None:
         cmap = rgb_to_rgba(cmap, alpha=alpha)
-    
+    elif isinstance(cmap[0], str):
+        cmap = unlabel_rgbs(cmap)
+
     step = np.arange(0, 1.0, 1.0/n_steps)
     cmap = [fic(cmap[ci], cmap[ci+1], s) for ci in range(ncols-1) for s in step]
     cmap = [c + (alpha,) for c in cmap]
