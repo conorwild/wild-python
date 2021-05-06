@@ -160,8 +160,8 @@ def create_stats_figure(
     #               markersize=10, label=legend_label)
 
     plt.legend(bbox_to_anchor=(1, 1.1), loc=4, borderaxespad=0.,
-        facecolor='white', edgecolor='lightgray')
-    plt.show()
+        facecolor='lightgray', edgecolor='lightgray')
+
     return figure
 
 
@@ -252,7 +252,7 @@ def create_bayes_factors_figure(results, log_stats=True,
     plt.legend(bbox_to_anchor=(0.5, 1.05), loc='lower center',
                borderaxespad=0., ncol=4, title='Bayesian Evidence',
                facecolor='lightgray', edgecolor='lightgray')
-    plt.show()
+
     return figure
 
 def pie_plot(
