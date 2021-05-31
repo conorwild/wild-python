@@ -16,7 +16,7 @@ idx = pd.IndexSlice
 
 dark2 = px.colors.qualitative.Dark2
 
-_LINE_COLOUR = 'rgb(16, 16, 16)'
+LINE_COLOUR = 'rgb(16, 16, 16)'
 _MARGINS = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
 
 from matplotlib import rc
@@ -32,14 +32,14 @@ def plotly_template():
             font_family = 'sans-serif',
             font = {'size': 10},
             xaxis = {
-                'zeroline': True,
-                'zerolinecolor': _LINE_COLOUR,
+                'zeroline': False,
+                'zerolinecolor': LINE_COLOUR,
                 'zerolinewidth': 1,
                 'gridcolor': 'white',
                 'gridwidth': 1
             },
             yaxis = {
-                'zeroline': True, 
+                'zeroline': False, 
                 'zerolinewidth': 1,
                 'gridwidth': 1,
                 'zerolinecolor': 'white',
@@ -48,18 +48,18 @@ def plotly_template():
         ),
         'data': {
             'bar': [go.Bar(
-                marker_line_color = _LINE_COLOUR, 
+                marker_line_color = LINE_COLOUR, 
                 marker_line_width = 1.5,
                 error_y = {
-                    'color': _LINE_COLOUR,
+                    'color': LINE_COLOUR,
                     'thickness': 1.5,
                 }
             )],
             'scatter': [go.Scatter(
-                marker_line_color = _LINE_COLOUR, 
+                marker_line_color = LINE_COLOUR, 
                 marker_line_width = 1.5,
                 error_y = {
-                    'color': _LINE_COLOUR,
+                    'color': LINE_COLOUR,
                     'thickness': 1.5,
                 }
             )]
@@ -259,6 +259,7 @@ def pie_plot(
         df, group_var, hole=0.3, marker=None, width=400, height=250,
         layout_args={}, pie_args={}
     ):
+    margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
     c = df.groupby(group_var).agg(['count']).iloc[:, 0]
     f = go.Figure(
             go.Pie(
@@ -269,11 +270,13 @@ def pie_plot(
                 marker={} if marker is None else marker,
                 **pie_args
             ))
+
     f.update_layout(
         width=width, height=250, 
         margin=margins,
         legend=dict(title=group_var),
-        **merge(_PLOTLY_LAYOUT_DEFAULTS, layout_args))
+        template=plotly_template(),
+        **layout_args)
 
     return f
 
@@ -281,7 +284,7 @@ def histogram(
         df, var, bins, centres=None, x_title=None, y_title=None, height=300,
         width=400, layout_args={}, bar_args={}
     ):
-
+    margins = {'t': 20, 'r': 10, 'l': 80, 'b': 50}
     counts, bins = np.histogram(df[var], bins=bins)
     if centres is None: 
         centres = bins = 0.5 * (bins[:-1] + bins[1:])
@@ -297,7 +300,8 @@ def histogram(
         margin=margins,
         barmode='group', bargap=0.0, 
         width=width, height=height,
-        **merge(_PLOTLY_LAYOUT_DEFAULTS(), layout_args))
+        template=plotly_template(),
+        **layout_args)
 
     return f
 
