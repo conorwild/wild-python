@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import itertools
+import re
 from statsmodels.sandbox.stats.multicomp import multipletests
 from statsmodels.formula.api import logit, mnlogit, ols
 from statsmodels.stats.anova import anova_lm
@@ -378,6 +379,44 @@ def compare_models(model_comparisons,
         .pipe(adjust_pvals, **correction_args)
         .swaplevel('contrast', 'score')
         .loc[idx[score_names,:], :]
+    )
+
+    return results_df
+
+def build_contrast(model, expr):
+    terms = expr.split('*')
+    regexp = "^" + ':'.join([f"{t}(\[.+\])?" for t in terms]) + "$"
+    i = [True if re.match(regexp, par) else False for par in model.params.index]
+    c = np.eye(len(i))[i, :]
+    if c.shape[0] == 0:
+        raise AttributeError(f"Invalid contrast: {expr}; terms not found in model specification.")
+    return c
+
+def set_index_names(df, names):
+    df.index = df.index.set_names(names)
+    return df
+
+def f_tests(estimated_models, contrasts, **correction_args):
+
+    results_df = {}
+    for m in estimated_models:
+        for c_str in contrasts:
+            score_name = m.model.endog_names
+            c_matrix = build_contrast(m, c_str)
+            f_result = m.f_test(c_matrix)
+            results_df[(score_name, c_str)] = {
+                'F': f_result.fvalue,
+                'p': f_result.pvalue,
+                'df1': f_result.df_num,
+                'df2': f_result.df_denom
+            }
+    
+
+    results_df = (pd
+        .DataFrame
+        .from_dict(results_df, orient='index')
+        .pipe(set_index_names, ['score', 'contrast'])
+        .pipe(adjust_pvals, **correction_args)
     )
 
     return results_df
