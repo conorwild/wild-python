@@ -3,3 +3,5 @@
 __pycache__/
 wildpython.egg-info/
 wildpython.egg-info
+.vscode/
+*.code-workspace
