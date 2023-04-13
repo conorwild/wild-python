@@ -10,7 +10,6 @@ from .wild_statsmodels import f_1way_pval, tstat
 from .wild_colors import D1_CMAP, D2_CMAP, D3_CMAP, D4_CMAP
 from os import path
 from copy import deepcopy
-from mergedeep import merge
 from plotly.colors import colorbrewer as cb
 
 idx = pd.IndexSlice
@@ -70,7 +69,7 @@ def plotly_template():
 def create_stats_figure(
         results, stat_name, p_name, alpha=0.05, log_stats=True, 
         diverging=False, stat_range=None, correction=None, vertline=4, 
-        marker_color=None, reverse=False
+        marker_color=None, reverse=False, vert_var='contrast', horz_var='score'
     ):
     """ Creates a matrix figure to summarize multple tests/scores. Each cell 
         represents a contrast (or model comparison) for a specific effect (rows)
@@ -98,16 +97,16 @@ def create_stats_figure(
         
     """
 
-    score_index = results.index.unique('score')
-    contrast_index = results.index.unique('contrast')
+    score_index = results.index.unique(horz_var)
+    contrast_index = results.index.unique(vert_var)
     stat_values = (results
         .loc[:, stat_name]
-        .unstack('contrast')
+        .unstack(vert_var)
         .loc[score_index, contrast_index]
     )
     p_values = (results
         .loc[:, p_name]
-        .unstack('contrast')
+        .unstack(vert_var)
         .loc[score_index, contrast_index]
     )
     num_scores = stat_values.shape[0]
@@ -258,10 +257,12 @@ def create_bayes_factors_figure(results, log_stats=True,
 
 def pie_plot(
         df, group_var, hole=0.3, marker=None, width=400, height=250,
-        layout_args={}, pie_args={}
+        layout_args={}, pie_args={}, group_order=None,
     ):
     margins = {'t': 20, 'r': 10, 'l': 80, 'b': 20}
     c = df.groupby(group_var).agg(['count']).iloc[:, 0]
+    if group_order is not None:
+        c = c[group_order]
     f = go.Figure(
             go.Pie(
                 labels=c.index, 
@@ -275,7 +276,7 @@ def pie_plot(
     f.update_layout(
         width=width, height=250, 
         margin=margins,
-        legend=dict(title=group_var),
+        legend=dict(title=group_var.title()),
         template=plotly_template(),
         **layout_args)
 

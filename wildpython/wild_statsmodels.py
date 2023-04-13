@@ -429,22 +429,24 @@ def corrected_alpha_from(**correction_args):
     else:
         return 0.05
 
-def adjust_pvals(results, 
-        n_comparisons=None, adj_across=None, adj_type=None, alpha=None):
+def adjust_pvals(
+        results, column='p', 
+        n_comparisons=None, adj_across=None, adj_type=None, alpha=None
+    ):
 
     if n_comparisons is not None:
-        p_adj = results['p'] * n_comparisons
+        p_adj = results[column] * n_comparisons
 
     elif alpha is not None:
-        p_adj = results['p'] * 0.05/alpha
+        p_adj = results[column] * 0.05/alpha
 
     elif adj_across is not None and adj_type is not None:
         if adj_across == 'all':
-            p_vals = results[['p']]
+            p_vals = results[[column]]
         elif adj_across in ['scores', 'score', 's']:
-            p_vals = results['p'].unstack('contrast')
+            p_vals = results[column].unstack('contrast')
         elif adj_across in ['contrasts', 'contrast', 'con', 'cons', 'c']:
-            p_vals = results['p'].unstack('score')
+            p_vals = results[column].unstack('score')
         else:
             raise ValueError(f"Invalid adjust across = {adj_across}")
           
@@ -455,7 +457,7 @@ def adjust_pvals(results,
         p_adj = p_adj.reorder_levels(results.index.names).reindex(results.index)
 
     else:
-        p_adj = results['p']
+        p_adj = results[column]
 
     results['p_adj'] = np.clip(p_adj.values, 0, 1)
     return results
@@ -620,24 +622,6 @@ def rm_sems(X):
     cond_stders = cond_stdevs / np.sqrt(X.shape[0])
     return cond_stders
 
-def filter_df(df, sds = [6,4], subset=None, drop=False):
-    if subset is None:
-        subset = df.columns
-    
-    df_ = df[subset].copy()
-
-    outliers = np.full(df_.shape, False)
-    for sd in sds:
-        stats = df_.agg(['count', 'mean', 'std'])
-        oorange = (abs(df_ - stats.loc['mean', :]) > sd*stats.loc['std', :])
-        df_[oorange] = np.nan
-        outliers = (outliers | oorange.values)
-    df[subset] = df_
-
-    if drop:
-        df = df[~outliers.any(axis=1)]
-
-    return df
 
 from scipy import stats
 ## Helper functions for running ch2, 1-way ANOVA, or t-tests on a Pandas datafame.
